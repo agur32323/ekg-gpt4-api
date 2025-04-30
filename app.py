@@ -1,48 +1,49 @@
 import os
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import openai
-from dotenv import load_dotenv
-
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = Flask(__name__)
 CORS(app)
+
+HF_API_KEY = os.getenv("HF_API_KEY")
+
+def yorum_huggingface_ile(voltages, heart_rate):
+    try:
+        prompt = (
+            f"EKG verisi geldi. Nabız: {heart_rate} bpm.\n"
+            f"Volt: {voltages[:10]}...\n"
+            "P, QRS, T dalgalarını ve ritmi yorumla:"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {HF_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        response = requests.post(
+            "https://api-inference.huggingface.co/models/google/flan-t5-small",
+            headers=headers,
+            json={"inputs": prompt},
+            timeout=20
+        )
+        result = response.json()
+        return result[0].get("generated_text", "Yorum alınamadı.")
+    except Exception as e:
+        print("HuggingFace yorum hatası:", e)
+        return "Yorum alınamadı."
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
         data = request.get_json()
-        voltages = data.get("voltages", [])
-        heart_rate = data.get("heartRate", 0)
-
-        prompt = (
-            f"EKG verisi geldi. Nabız: {heart_rate} bpm.\n"
-            f"Voltaj örnekleri: {voltages[:10]}...\n"
-            "Lütfen şu başlıklarla tıbbi yorum yap:\n"
-            "- P dalgası görünüyor mu?\n"
-            "- QRS kompleksi belirgin mi?\n"
-            "- T dalgası var mı?\n"
-            "- Ritim düzenli mi?\n"
-            "- Klinik yorum:\n\n"
-            "Yorum:"
-        )
-
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # veya "gpt-4" planına bağlı olarak
-            messages=[
-                {"role": "system", "content": "Sen bir kardiyolog gibi davranan tıbbi yapay zekasın."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-
-        comment = response['choices'][0]['message']['content']
-        return jsonify({"comment": comment})
-
+        voltages = data["voltages"]
+        heart_rate = data["heartRate"]
+        yorum = yorum_huggingface_ile(voltages, heart_rate)
+        return jsonify({"comment": yorum})
     except Exception as e:
-        print("❌ GPT API Hatası:", e)
-        return jsonify({"comment": "Yorum alınamadı."}), 500
+        print("Sunucu hatası:", e)
+        return jsonify({"comment": "Sunucu hatası oluştu."}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
