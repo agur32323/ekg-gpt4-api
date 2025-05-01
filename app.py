@@ -4,6 +4,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
+# Ortam değişkenlerini yükle (.env dosyasından CLAUDE_API_KEY için)
 load_dotenv()
 
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
@@ -19,17 +20,20 @@ def analyze():
         voltages = data.get("voltages", [])
         heart_rate = data.get("heartRate", 0)
 
-        # 👇 Claude'a gönderilecek istem
         prompt = (
-            f"Nabız: {heart_rate} bpm\n"
-            f"Voltajlar: {voltages[:10]}...\n"
-            f"EKG verisini tıbbi olarak yorumla. P, QRS, T dalgalarını açıklayıp ritim analizi yap.\n"
+            f"📈 Nabız: {heart_rate} bpm\n"
+            f"🔌 Voltajlar: {voltages[:30]}\n\n"
+            "Bu EKG verisini tıbbi olarak analiz et.\n"
+            "- P, QRS ve T dalgalarını açıkla\n"
+            "- Ritim tipi belirt\n"
+            "- Varsa anormallikleri yorumla\n"
+            "- Açıklaman kısa ve net olsun (maksimum 4 cümle).\n"
         )
 
         completion = anthropic.messages.create(
-            model="claude-3-opus-20240229",
+            model="claude-3-opus-20240229",  # İsteğe göre haiku vs. yapılabilir
             max_tokens=512,
-            temperature=0.7,
+            temperature=0.5,
             messages=[
                 {"role": "user", "content": prompt}
             ]
@@ -39,8 +43,8 @@ def analyze():
         return jsonify({"comment": yorum})
 
     except Exception as e:
-        print("Claude yorum hatası:", e)
+        print("❌ Claude yorum hatası:", e)
         return jsonify({"comment": "Yorum alınamadı."}), 500
 
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=False, host="0.0.0.0", port=5050)
