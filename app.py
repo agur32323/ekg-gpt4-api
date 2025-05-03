@@ -67,8 +67,8 @@ def analyze_glucose():
             return jsonify({"interpretation": "Glukoz verisi alınamadı."}), 400
 
         # GlukozEntry formatı: { "glucoseValue": 110, "timestamp": "2025-05-04T14:00:00" }
-        values = [entry["glucoseValue"] for entry in glucose_data]
-        timestamps = [entry["timestamp"] for entry in glucose_data]
+        values = [entry.get("glucoseValue") or entry.get("blood_glucose", 0.0) for entry in glucose_data]
+        timestamps = [entry.get("timestamp") or entry.get("recorded_at", "unknown") for entry in glucose_data]
 
         avg = sum(values) / len(values)
         max_val = max(values)
