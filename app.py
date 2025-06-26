@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from anthropic import Anthropic
+import numpy as np # RR aralıklarından HRV metrikleri hesaplamak için eklendi
 
 load_dotenv()
 
@@ -29,7 +30,7 @@ def analyze():
 
         prompt = (
             f"Nabız: {heart_rate} bpm\n"
-            f"Voltajlar: {voltages[:20]}\n\n"
+            f"Voltajlar: {voltages[:20]}\n\n" # İlk 20 voltajı gönderiyoruz, çok uzun olmaması için
             "Bu EKG verisini analiz et.\n"
             "- P, QRS, T dalgalarını açıkla\n"
             "- Ritim türünü belirle\n"
@@ -38,7 +39,7 @@ def analyze():
         )
 
         response = anthropic.messages.create(
-            model="claude-3-opus-20240229",
+            model="claude-3-opus-20240229", # Daha gelişmiş bir model kullanıldı
             max_tokens=512,
             temperature=0.5,
             messages=[
@@ -50,7 +51,7 @@ def analyze():
         return jsonify({"comment": comment.strip()})
 
     except Exception as e:
-        print("❌ Claude sunucu hatası:", str(e))
+        print("❌ Claude sunucu hatası (EKG):", str(e))
         return jsonify({"comment": f"Sunucu hatası: {str(e)}"}), 500
 
 # ----------------- GLUKOZ ANALİZİ ----------------- #
@@ -82,18 +83,24 @@ def analyze_glucose():
             for entry in glucose_data
         ]
 
-        avg = sum(values) / len(values)
-        max_val = max(values)
-        min_val = min(values)
+        # Sadece geçerli glukoz değerlerini (0'dan büyük) dikkate al
+        valid_values = [v for v in values if v > 0]
+        if not valid_values:
+            return jsonify({"interpretation": "Yorumlanacak geçerli glukoz verisi yok."}), 400
+
+        avg = sum(valid_values) / len(valid_values)
+        max_val = max(valid_values)
+        min_val = min(valid_values)
 
         prompt = (
-            f"Glukoz ölçüm verileri (mg/dL): {values}\n"
+            f"Glukoz ölçüm verileri (mg/dL): {valid_values}\n"
             f"Zamanlar: {timestamps}\n"
             f"Ortalama: {avg:.1f} mg/dL, En yüksek: {max_val}, En düşük: {min_val}\n\n"
             "Bu glukoz verilerini tıbbi olarak yorumla.\n"
-            "- Hipoglisemi ya da hiperglisemi var mı?\n"
-            "- Glukoz trendi nasıl?\n"
-            "- 3-4 cümleyle kısa ve açıklayıcı bir yorum yap.\n"
+            "- Hipoglisemi (düşük kan şekeri) ya da hiperglisemi (yüksek kan şekeri) var mı? Normal aralık 70-140 mg/dL'dir.\n"
+            "- Glukoz trendi nasıl (yükseliyor, düşüyor, stabil)?\n"
+            "- Veri toplama zamanları göz önüne alındığında, yemek sonrası mı yoksa açlık durumu mu daha olası?\n"
+            "- 3-4 cümleyle kısa ve açıklayıcı bir yorum yap ve olası tavsiyelerde bulun (örn: doktora danışın, beslenmeye dikkat edin).\n"
         )
 
         response = anthropic.messages.create(
@@ -111,6 +118,68 @@ def analyze_glucose():
     except Exception as e:
         print("❌ Glukoz sunucu hatası:", str(e))
         return jsonify({"interpretation": f"Sunucu hatası: {str(e)}"}), 500
+
+
+# ----------------- HRV & RR Intervals ANALİZİ ----------------- #
+@app.route("/analyze_hrv_rr", methods=["POST"])
+def analyze_hrv_rr():
+    try:
+        if not CLAUDE_API_KEY:
+            return jsonify({"hrv_interpretation": "API anahtarı eksik!"}), 401
+
+        data = request.get_json()
+        rr_intervals = data.get("rr_intervals", []) # RR aralıkları milisaniye cinsinden
+        sdnn = data.get("sdnn", None) # Opsiyonel: Hesaplanan SDNN değeri
+        rmssd = data.get("rmssd", None) # Opsiyonel: Hesaplanan RMSSD değeri
+
+        if not rr_intervals or not isinstance(rr_intervals, list):
+            return jsonify({"hrv_interpretation": "Geçerli RR aralığı verisi yok."}), 400
+
+        # Eğer SDNN ve RMSSD istemciden gelmezse, burada temel hesaplamaları yapabiliriz.
+        # Bu kısım, isterseniz istemci tarafında da yapılabilir.
+        if sdnn is None and len(rr_intervals) > 1:
+            rr_array = np.array(rr_intervals)
+            sdnn = np.std(rr_array) # Standart sapma
+            diff_rr = np.diff(rr_array)
+            rmssd = np.sqrt(np.mean(diff_rr**2)) # Karekök ortalama kare farkı
+
+        prompt = (
+            f"HRV (Kalp Atış Hızı Değişkenliği) ve RR Aralığı verilerini yorumla:\n"
+            f"RR Aralıkları (ms): {rr_intervals[:50]}{'...' if len(rr_intervals) > 50 else ''}\n" # İlk 50 değeri göster
+        )
+
+        if sdnn is not None:
+            prompt += f"SDNN: {sdnn:.2f} ms\n"
+        if rmssd is not None:
+            prompt += f"RMSSD: {rmssd:.2f} ms\n"
+
+        prompt += (
+            "\nBu HRV ve RR aralıkları verilerini tıbbi ve genel sağlık açısından analiz et.\n"
+            "- Otonom sinir sistemi (sempatik ve parasempatik) aktivitesi hakkında ne söylenebilir?\n"
+            "- Stres düzeyi, iyileşme durumu veya genel kardiyovasküler sağlık hakkında yorum yap.\n"
+            "- Düşük/yüksek SDNN ve RMSSD değerlerinin potansiyel anlamlarını açıkla.\n"
+            "- 3-5 cümleyle kısa, anlaşılır ve eyleme geçirilebilir bir yorum yap ve gerekirse bir uzmana danışma öner.\n"
+            "Örnek yorum: 'RR aralıklarınızdaki varyasyonlar normal sınırlar içinde görünüyor. SDNN ve RMSSD değerleriniz, otonom sinir sisteminizin iyi dengelendiğini ve stres yönetimi kapasitenizin iyi olduğunu düşündürmektedir. Bu, genel kardiyovasküler sağlığınızın iyi olduğuna işaret eder.'\n"
+            "Olumsuz örnek: 'RR aralıklarınız düşük varyasyon gösteriyor. Düşük SDNN ve RMSSD değerleri, artmış stres veya azalmış parasempatik aktivite ile ilişkili olabilir. Dinlenmeye ve stres yönetimine daha fazla odaklanmanız faydalı olabilir, gerekirse bir uzmana danışın.'\n"
+        )
+
+
+        response = anthropic.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=512,
+            temperature=0.7, # HRV yorumu için biraz daha yaratıcı olabilir
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+
+        hrv_interpretation = "".join(block.text for block in response.content if hasattr(block, "text"))
+        return jsonify({"hrv_interpretation": hrv_interpretation.strip()})
+
+    except Exception as e:
+        print("❌ HRV & RR Sunucu hatası:", str(e))
+        return jsonify({"hrv_interpretation": f"Sunucu hatası: {str(e)}"}), 500
+
 
 # ----------------- SUNUCU BAŞLAT ----------------- #
 if __name__ == "__main__":
