@@ -13,66 +13,63 @@ app = Flask(__name__)
 CORS(app)
 
 anthropic = Anthropic(api_key=CLAUDE_API_KEY)
-# ----------------- KALP ATIŞ ANALİZİ ----------------- #
+# ----------------- KALP ATIŞ ANALİZİ (YENİ) ----------------- #
 @app.route("/analyze_heart", methods=["POST"])
 def analyze_heart():
-    """
-    İstek örneği (Flutter tarafı):
-    {
-      "bpm_values": [90, 92, 91, ...],
-      "min": 90,
-      "max": 93,
-      "average": 91.8
-    }
-    Dönen JSON:
-    { "heart_interpretation": "..." }
-    """
     try:
         if not CLAUDE_API_KEY:
             return jsonify({"heart_interpretation": "API anahtarı eksik!"}), 401
 
-        data = request.get_json() or {}
+        data = request.get_json()
         bpm_values = data.get("bpm_values", [])
-        avg = data.get("average")
-        max_val = data.get("max")
-        min_val = data.get("min")
+        min_bpm = data.get("min", 0)
+        max_bpm = data.get("max", 0)
+        average_bpm = data.get("average", 0.0)
 
-        # Temel kontroller
-        if not bpm_values or not isinstance(bpm_values, list):
-            return jsonify({"heart_interpretation": "Geçerli BPM verisi yok."}), 400
+        # 0 olan BPM değerlerini filtrele
+        valid_bpm_values = [bpm for bpm in bpm_values if bpm > 0]
+        if not valid_bpm_values:
+            return jsonify({"heart_interpretation": "Yorumlanacak geçerli kalp atış hızı verisi yok."}), 400
 
-        # İstemci göndermediyse sunucu tarafında hesapla
-        avg = avg or (sum(bpm_values) / len(bpm_values))
-        max_val = max_val or max(bpm_values)
-        min_val = min_val or min(bpm_values)
-
-        # --- Claude'a gönderilecek prompt ---
+        # Prompt'ı daha yapısal hale getiriyoruz
         prompt = (
-            f"Son 20 kalp atışı değerleri (BPM): {bpm_values}\n"
-            f"Maksimum: {max_val} bpm, Minimum: {min_val} bpm, Ortalama: {avg:.1f} bpm\n\n"
-            "Bu kalp atış hızı verisini klinik olarak kısaca yorumla:\n"
-            "- Ritim düzenli mi, düzensiz mi?\n"
-            "- Değerler istirahat için normal mi (<60 bradikardi, >100 taşikardi kabul edilir)?\n"
-            "- Kardiyovasküler sağlık veya olası riskler hakkında kısaca bilgi ver.\n"
-            "- 3-4 cümlelik net ve eyleme geçirilebilir tavsiyeler ekle.\n"
+            f"Aşağıdaki kalp atış hızı (BPM) verilerini analiz et ve yorumla. Yanıtını aşağıdaki başlıklar altında yapılandır:\n\n"
+            f"**Veri Özeti:**\n"
+            f"- Ölçülen Kalp Atış Hızları: {valid_bpm_values}\n"
+            f"- Minimum BPM: {min_bpm}\n"
+            f"- Maksimum BPM: {max_bpm}\n"
+            f"- Ortalama BPM: {average_bpm:.1f}\n\n"
+            f"**Ritim ve Trend Analizi:**\n"
+            f"- Kalp atış hızı ritmi düzenli mi, düzensiz mi? (Verilere göre yorumla)\n"
+            f"- Kalp atış hızında belirgin bir trend var mı? (Yükseliş, düşüş, stabilizasyon)\n\n"
+            f"**Tıbbi Yorum ve Genel Değerlendirme:**\n"
+            f"- Genel durumun tıbbi değerlendirmesi. (örn. taşikardi, bradikardi, normal ritim)\n"
+            f"- Ortalamaya, minimuma ve maksimuma göre yorum yap.\n"
+            f"- Anormallikler varsa belirt ve potansiyel nedenleri/anlamlarını açıkla.\n"
+            f"- Kullanıcıya yönelik kısa ve net bir açıklama yap. (Maksimum 3-4 cümle olmalı, karmaşık terimlerden kaçın)\n\n"
+            f"**Önemli Notlar ve Tavsiyeler:**\n"
+            f"- Gerekliyse tıbbi tavsiye ver (örn. doktora danışın, yaşam tarzı önerileri).\n"
+            f"- Bu yorumun tıbbi bir tanı olmadığını, sadece bilgi amaçlı olduğunu vurgula.\n"
         )
+
 
         response = anthropic.messages.create(
             model="claude-3-opus-20240229",
-            max_tokens=256,
+            max_tokens=1024, # Yorumun tam gelmesi için token limitini artırıyoruz
             temperature=0.5,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
         )
 
-        interpretation = "".join(
-            blk.text for blk in response.content if hasattr(blk, "text")
-        )
-        return jsonify({"heart_interpretation": interpretation.strip()})
+        heart_interpretation = "".join(block.text for block in response.content if hasattr(block, "text"))
+        return jsonify({"heart_interpretation": heart_interpretation.strip()})
 
     except Exception as e:
-        print("❌ Heart analysis error:", str(e))
+        print("❌ Kalp Atış Analizi sunucu hatası:", str(e))
         return jsonify({"heart_interpretation": f"Sunucu hatası: {str(e)}"}), 500
-# ----------------- EKG ANALİZİ ----------------- #
+
+        #----------------- EKG ANALİZİ ----------------- #
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
