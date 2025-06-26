@@ -13,7 +13,65 @@ app = Flask(__name__)
 CORS(app)
 
 anthropic = Anthropic(api_key=CLAUDE_API_KEY)
+# ----------------- KALP ATIŞ ANALİZİ ----------------- #
+@app.route("/analyze_heart", methods=["POST"])
+def analyze_heart():
+    """
+    İstek örneği (Flutter tarafı):
+    {
+      "bpm_values": [90, 92, 91, ...],
+      "min": 90,
+      "max": 93,
+      "average": 91.8
+    }
+    Dönen JSON:
+    { "heart_interpretation": "..." }
+    """
+    try:
+        if not CLAUDE_API_KEY:
+            return jsonify({"heart_interpretation": "API anahtarı eksik!"}), 401
 
+        data = request.get_json() or {}
+        bpm_values = data.get("bpm_values", [])
+        avg = data.get("average")
+        max_val = data.get("max")
+        min_val = data.get("min")
+
+        # Temel kontroller
+        if not bpm_values or not isinstance(bpm_values, list):
+            return jsonify({"heart_interpretation": "Geçerli BPM verisi yok."}), 400
+
+        # İstemci göndermediyse sunucu tarafında hesapla
+        avg = avg or (sum(bpm_values) / len(bpm_values))
+        max_val = max_val or max(bpm_values)
+        min_val = min_val or min(bpm_values)
+
+        # --- Claude'a gönderilecek prompt ---
+        prompt = (
+            f"Son 20 kalp atışı değerleri (BPM): {bpm_values}\n"
+            f"Maksimum: {max_val} bpm, Minimum: {min_val} bpm, Ortalama: {avg:.1f} bpm\n\n"
+            "Bu kalp atış hızı verisini klinik olarak yorumla:\n"
+            "- Ritim düzenli mi, düzensiz mi?\n"
+            "- Değerler istirahat için normal mi (<60 bradikardi, >100 taşikardi kabul edilir)?\n"
+            "- Kardiyovasküler sağlık veya olası riskler hakkında kısaca bilgi ver.\n"
+            "- 3-4 cümlelik net ve eyleme geçirilebilir tavsiyeler ekle.\n"
+        )
+
+        response = anthropic.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=256,
+            temperature=0.5,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        interpretation = "".join(
+            blk.text for blk in response.content if hasattr(blk, "text")
+        )
+        return jsonify({"heart_interpretation": interpretation.strip()})
+
+    except Exception as e:
+        print("❌ Heart analysis error:", str(e))
+        return jsonify({"heart_interpretation": f"Sunucu hatası: {str(e)}"}), 500
 # ----------------- EKG ANALİZİ ----------------- #
 @app.route("/analyze", methods=["POST"])
 def analyze():
