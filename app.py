@@ -50,7 +50,7 @@ def analyze_heart():
         prompt = (
             f"Son 20 kalp atışı değerleri (BPM): {bpm_values}\n"
             f"Maksimum: {max_val} bpm, Minimum: {min_val} bpm, Ortalama: {avg:.1f} bpm\n\n"
-            "Bu kalp atış hızı verisini klinik olarak yorumla:\n"
+            "Bu kalp atış hızı verisini klinik olarak kısaca yorumla:\n"
             "- Ritim düzenli mi, düzensiz mi?\n"
             "- Değerler istirahat için normal mi (<60 bradikardi, >100 taşikardi kabul edilir)?\n"
             "- Kardiyovasküler sağlık veya olası riskler hakkında kısaca bilgi ver.\n"
